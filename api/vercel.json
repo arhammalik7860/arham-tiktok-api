@@ -1,0 +1,6 @@
+{
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/tiktok.js" },
+    { "src": "/(.*)", "dest": "/api/tiktok.js" }
+  ]
+}
