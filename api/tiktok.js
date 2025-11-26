@@ -1,85 +1,118 @@
+    
 const axios = require('axios');
 const UserAgent = require('user-agents');
 
-const UA = new UserAgent({ deviceCategory: 'mobile' }).toString();
-
-const headers = {
-  'User-Agent': UA,
-  'Accept': 'application/json',
-  'Referer': 'https://www.tiktok.com/',
+const getHeaders = () => {
+  const ua = new UserAgent({ deviceCategory: 'mobile', platform: 'Android' });
+  return {
+    'User-Agent': ua.toString(),
+    'Accept': 'application/json',
+    'Referer': 'https://www.tiktok.com/',
+    'Accept-Language': 'en-US,en;q=0.9',
+  };
 };
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Expose-Headers', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
   const { url } = req.query;
 
   if (!url) {
     return res.json({
       creator: "Arham",
-      api: "Arham TikTok API v2",
+      api: "Arham Private TikTok API v3 (Nov 2025)",
       endpoints: {
-        video: "/?url=https://vm.tiktok.com/XXXXX",
+        info: "/?url=https://vm.tiktok.com/XXXXX",
+        download: "/?url=VIDEO_URL&download=1",
         music: "/?url=VIDEO_URL&music=1"
-      }
+      },
+      status: "🚀 Ready!"
     });
   }
 
+  if (!url.includes('tiktok.com')) {
+    return res.status(400).json({ error: "Bhai, valid TikTok URL daal!" });
+  }
+
   try {
-    // Extract video ID
-    let id = url.match(/video\/(\d+)/)?.[1];
-    if (!id) id = url.match(/\/(\d+)/)?.[1];
-    if (!id) return res.status(400).json({ error: "Invalid TikTok URL" });
+    // Extract aweme_id (video ID)
+    let awemeId = url.match(/video\/(\d+)/)?.[1];
+    if (!awemeId) {
+      // Handle short links – redirect to full URL first
+      const shortRes = await axios.get(url, { headers: getHeaders(), maxRedirects: 0, validateStatus: () => true });
+      const location = shortRes.headers.location;
+      if (location) {
+        awemeId = location.match(/video\/(\d+)/)?.[1];
+      }
+    }
+    if (!awemeId) return res.status(400).json({ error: "Video ID nahi mila!" });
 
-    // Latest working endpoint (Nov 2025)
-    const apiUrl = `https://api22-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=${id}&version_code=262&app_name=aweme&channel=googleplay&device_platform=android&aid=1180`;
+    // Updated Endpoint: aweme/detail (working Nov 2025, with better params)
+    const apiUrl = `https://api-h2.tiktokv.com/aweme/v1/aweme/detail/?aweme_id=${awemeId}&aid=1988&app_name=tiktok_web&device_platform=web_mobile&version_code=190300&version_name=19.03.00`;
 
-    const response = await axios.get(apiUrl, { headers, timeout: 10000 });
-    const aweme = response.data.aweme_list?.[0];
+    const response = await axios.get(apiUrl, { 
+      headers: getHeaders(), 
+      timeout: 15000 
+    });
 
-    if (!aweme) return res.status(404).json({ error: "Video not found or private" });
+    const aweme = response.data.aweme_list?.[0] || response.data.aweme_detail;
+
+    if (!aweme) return res.status(404).json({ error: "Video not found ya private hai 😔" });
 
     const videoData = aweme.video;
     const musicData = aweme.music;
 
     const result = {
       id: aweme.aweme_id,
-      desc: aweme.desc || "No caption",
+      description: aweme.desc || "No caption",
       author: aweme.author?.nickname || "Unknown",
-      author_username: aweme.author?.unique_id,
+      username: aweme.author?.unique_id,
       likes: aweme.statistics?.digg_count,
       comments: aweme.statistics?.comment_count,
       shares: aweme.statistics?.share_count,
-      play_count: aweme.statistics?.play_count,
+      views: aweme.statistics?.play_count,
       video: {
-        no_watermark: videoData.play_addr?.url_list?.[0] || videoData.download_addr?.url_list?.[0],
+        no_watermark: videoData.play_addr?.url_list?.[0]?.replace('playwm', 'play') || videoData.download_addr?.url_list?.[0],
         with_watermark: videoData.download_addr?.url_list?.[0],
         duration: videoData.duration,
-        cover: videoData.cover?.url_list?.[0],
-        dynamic_cover: videoData.dynamic_cover?.url_list?.[0]
+        height: videoData.height,
+        width: videoData.width,
+        cover: videoData.cover?.url_list?.[0]
       },
       music: {
-        title: musicData.title,
-        author: musicData.author,
-        url: musicData.play_url?.url_list?.[0]
+        title: musicData?.title,
+        author: musicData?.author,
+        url: musicData?.play_url?.url_list?.[0]
       },
-      creator: "Arham API"
+      creator: "Made by Arham ❤️"
     };
 
-    // Agar music=1 hai to sirf music do
-    if (req.query.music === "1") {
-      if (result.music.url) {
-        return res.redirect(result.music.url);
-      }
+    // Music only
+    if (req.query.music === '1') {
+      if (result.music.url) return res.redirect(result.music.url);
+      return res.status(404).json({ error: "No music found" });
     }
 
-    // Direct video download
-    if (req.query.download === "1" || !req.query.json) {
+    // Direct download
+    if (req.query.download === '1') {
       const videoUrl = result.video.no_watermark || result.video.with_watermark;
-      const videoRes = await axios.get(videoUrl, { responseType: 'arraybuffer' });
+      if (!videoUrl) return res.status(404).json({ error: "No video URL" });
+
+      const videoRes = await axios.get(videoUrl, { 
+        headers: { ...getHeaders(), 'Referer': 'https://www.tiktok.com/' },
+        responseType: 'arraybuffer',
+        timeout: 30000 
+      });
+
       res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Content-Disposition', 'attachment; filename="arham_tiktok.mp4"');
+      res.setHeader('Content-Disposition', `attachment; filename="arham_tiktok_${awemeId}.mp4"`);
+      res.setHeader('Content-Length', videoRes.headers['content-length']);
       return res.send(videoRes.data);
     }
 
@@ -87,6 +120,21 @@ module.exports = async (req, res) => {
     res.json(result);
 
   } catch (err) {
-    res.status(500).json({ error: "Server error bhai, thodi der baad try karo" });
+    console.error(err.message);
+    // Fallback: Try SnapTik if direct API fails (rare)
+    if (err.response?.status === 404 || err.code === 'ENOTFOUND') {
+      try {
+        const fallbackRes = await axios.post('https://snaptik.app/abc2.php', 
+          new URLSearchParams({ url }), 
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Origin': 'https://snaptik.app' } }
+        );
+        const html = fallbackRes.data;
+        const match = html.match(/"(https?:\/\/[^"]+\.mp4[^"]*without watermark[^"]*)"/);
+        if (match) return res.redirect(match[1].slice(1, -1));
+      } catch (fallbackErr) {
+        // Ignore fallback error
+      }
+    }
+    res.status(500).json({ error: "Thodi der baad try karo, TikTok update kar raha hai 🙏" });
   }
 };
