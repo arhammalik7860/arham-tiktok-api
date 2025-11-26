@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "functions": {
+    "api/tiktok.js": {
+      "maxDuration": 30
+    }
+  },
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/api/tiktok.js"
+    }
+  ]
+}
